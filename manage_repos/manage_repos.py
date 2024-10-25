@@ -180,6 +180,9 @@ def merge(args):
             print()
             continue
 
+        # sleep for 1 seconds to keep us from being rate limited
+        time.sleep(1)
+
 
 def patch(args):
     """
@@ -260,8 +263,8 @@ def pr(args):
                 print()
                 continue
 
-            # sleep for 2 seconds to keep us from being rate limited
-            time.sleep(2)
+            # sleep for 1 seconds to keep us from being rate limited
+            time.sleep(1)
 
 
 def push(args):

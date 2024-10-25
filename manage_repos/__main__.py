@@ -168,7 +168,7 @@ def main():
     pr_parser.add_argument(
         "-g",
         "--github-user",
-        help="The GitHub username used to author the pull request.",
+        help="The GitHub username used to create the pull request.",
         required=True,
         type=str,
     )
@@ -204,7 +204,8 @@ def main():
         nargs="+",
         default=["."],
         help="Space-delimited list of files to stage in the repositories. "
-        + "Optional, and if left blank will default to all modified files.",
+        + "Optional, and if left blank will default to all modified files in "
+        + "the directory."
     )
     stage_parser.add_argument(
         "-m",

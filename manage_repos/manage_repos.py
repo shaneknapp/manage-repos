@@ -171,7 +171,7 @@ def merge(args):
                     command.append("-r")
                 case "squash":
                     command.append("-s")
-            print(command)
+
             subprocess.check_call(command)
         except subprocess.CalledProcessError as e:
             error = f"Error merging pull request {pr_number} in {name}: {e}"

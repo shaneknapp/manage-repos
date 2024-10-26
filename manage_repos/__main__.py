@@ -1,6 +1,9 @@
 import argparse
 import re
 import sys
+import toml
+
+from pathlib import Path
 
 from . import manage_repos
 
@@ -26,6 +29,14 @@ def check_config(config):
 
 
 def main():
+    version = "unknown"
+    pyproject_toml_file = Path(__file__).parent.parent / "pyproject.toml"
+    if pyproject_toml_file.exists() and pyproject_toml_file.is_file():
+        data = toml.load(pyproject_toml_file)
+        # check project.version
+        if "project" in data and "version" in data["project"]:
+            version = data["project"]["version"]
+
     argparser = argparse.ArgumentParser()
     subparsers = argparser.add_subparsers(
         dest="command",
@@ -38,6 +49,7 @@ def main():
         default="repos.txt",
         help="Path to the file containing list of repositories to operate on. "
         + "Defaults to repos.txt located in the current working directory.",
+        type=str,
     )
     argparser.add_argument(
         "-d",
@@ -45,6 +57,12 @@ def main():
         default=".",
         help="Location on the filesystem of the directory containing the "
         + "managed repositories. Defaults to the current working directory.",
+        type=str,
+    )
+    argparser.add_argument(
+        "--version",
+        action="version",
+        version=f"{version}",
     )
 
     branch_parser = subparsers.add_parser(
@@ -55,6 +73,8 @@ def main():
         "-b",
         "--branch",
         help="Name of the feature branch to create.",
+        required=True,
+        type=str,
     )
 
     clone_parser = subparsers.add_parser(
@@ -68,32 +88,109 @@ def main():
         "--set-remote",
         const="origin",
         nargs="?",
-        help="Set the user's GitHub fork as a remote. Defaults to 'origin'.",
+        help="Set the user's GitHub fork as a remote. Defaults to '%(const)s'.",
+        type=str,
     )
     clone_parser.add_argument(
         "-g",
         "--github-user",
         help="The GitHub username of the fork to set in the remote. Required "
         + "if --set-remote is used.",
+        type=str,
+    )
+
+    merge_parser = subparsers.add_parser(
+        "merge",
+        description="Using the gh tool, merge the most recent pull "
+        + "request in the managed repositories. Before using this command, "
+        + "you must authenticate with gh to ensure that you have the correct "
+        + "permission for the required scopes.",
+    )
+    merge_parser.add_argument(
+        "-b",
+        "--body",
+        help="The commit message to apply to the merge (optional).",
+        type=str,
+    )
+    merge_parser.add_argument(
+        "-d",
+        "--delete",
+        action="store_true",
+        help="Delete your local feature branch after the pull request is "
+        + "merged (optional).",
+    )
+    merge_parser.add_argument(
+        "-s",
+        "--strategy",
+        choices=["merge", "rebase", "squash"],
+        default="merge",
+        help="The pull request merge strategy to use, defaults to '%(default)s'.",
+        type=str,
     )
 
     patch_parser = subparsers.add_parser(
         "patch",
         description="Apply a git patch to managed repositories.",
     )
-    patch_parser.add_argument("-p", "--patch", help="Path to the patch file to apply.")
+    patch_parser.add_argument(
+        "-p",
+        "--patch",
+        help="Path to the patch file to apply.",
+        required=True,
+        type=str,
+    )
+
+    pr_parser = subparsers.add_parser(
+        "pr",
+        description="Using the gh tool, create a pull request after pushing.",
+    )
+    pr_parser.add_argument(
+        "-t",
+        "--title",
+        help="Title of the pull request.",
+        required=True,
+        type=str,
+    )
+    pr_parser.add_argument(
+        "-b",
+        "--body",
+        help="Body of the pull request (optional).",
+        type=str,
+    )
+    pr_parser.add_argument(
+        "-B",
+        "--branch-default",
+        default="main",
+        help="Default remote branch that the pull requests will be merged "
+        + "to. This is optional and defaults to '%(default)s'.",
+        type=str,
+    )
+    pr_parser.add_argument(
+        "-g",
+        "--github-user",
+        help="The GitHub username used to create the pull request.",
+        required=True,
+        type=str,
+    )
 
     push_parser = subparsers.add_parser(
         "push",
         description="Push managed repositories to a remote.",
     )
-    push_parser.add_argument("-b", "--branch", help="Name of the branch to push.")
+    push_parser.add_argument(
+        "-b",
+        "--branch",
+        help="Name of the branch to push.",
+        required=True,
+        type=str,
+    )
     push_parser.add_argument(
         "-r",
         "--remote",
-        help="Name of the remote to push to.  This is optional and defaults "
-        + "to 'origin'.",
         default="origin",
+        help="Name of the remote to push to.  This is optional and defaults "
+        + "to '%(default)s'.",
+        type=str,
     )
 
     stage_parser = subparsers.add_parser(
@@ -107,12 +204,15 @@ def main():
         nargs="+",
         default=["."],
         help="Space-delimited list of files to stage in the repositories. "
-        + "Optional, and if left blank will default to all modified files.",
+        + "Optional, and if left blank will default to all modified files in "
+        + "the directory.",
     )
     stage_parser.add_argument(
         "-m",
         "--message",
         help="Commit message to use for the changes.",
+        required=True,
+        type=str,
     )
 
     sync_parser = subparsers.add_parser(
@@ -125,14 +225,16 @@ def main():
         "--branch-default",
         default="main",
         help="Default remote branch to sync to. This is optional and "
-        + "defaults to 'main'.",
+        + "defaults to '%(default)s'.",
+        type=str,
     )
     sync_parser.add_argument(
         "-u",
         "--upstream",
         default="upstream",
         help="Name of the parent remote to sync from. This is optional and "
-        + "defaults to 'upstream'.",
+        + "defaults to '%(default)s'.",
+        type=str,
     )
     sync_parser.add_argument(
         "-p",
@@ -145,7 +247,7 @@ def main():
         "--remote",
         default="origin",
         help="The name of the remote fork to push to.  This is optional and "
-        + "defaults to 'origin'.",
+        + "defaults to '%(default)s'.",
     )
 
     args = argparser.parse_args()
@@ -158,8 +260,12 @@ def main():
         errors.append(manage_repos.branch(args))
     elif args.command == "clone":
         errors.append(manage_repos.clone(args))
+    elif args.command == "merge":
+        errors.append(manage_repos.merge(args))
     elif args.command == "patch":
         errors.append(manage_repos.patch(args))
+    elif args.command == "pr":
+        errors.append(manage_repos.pr(args))
     elif args.command == "push":
         errors.append(manage_repos.push(args))
     elif args.command == "stage":

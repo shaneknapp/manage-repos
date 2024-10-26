@@ -2,6 +2,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import os
 
 
@@ -36,7 +37,7 @@ def branch(args):
     """
     Create a new feature branch in all repositories in the config file.
     """
-    errors = []
+    errors = list()
     for name, path, _ in _iter_repos(args):
         print(f"Creating and switching to feature branch {args.branch} in {name}")
 
@@ -65,7 +66,7 @@ def clone(args):
     if args.set_remote and args.github_user is None:
         print(
             "Remote cannot be updated, please specify a GitHub username "
-            + "for the fork to continue."
+            + "for the forked repository to continue."
         )
         sys.exit(1)
 
@@ -73,7 +74,7 @@ def clone(args):
         os.makedirs(args.destination)
         print(f"Created destination directory {args.destination}")
 
-    errors = []
+    errors = list()
     for name, path, repo in _iter_repos(args):
         print(f"Cloning {name} from {repo} to {path}.")
         try:
@@ -121,20 +122,77 @@ def clone(args):
         return errors
 
 
+def merge(args):
+    """
+    Using the gh cli tool, merge the latest pull request in all repositories in
+    the config file.
+    """
+    errors = list()
+    for name, path, repo in _iter_repos(args):
+        try:
+            limit = 1
+            pr_list = subprocess.run(
+                [
+                    "gh",
+                    "pr",
+                    "list",
+                    f"-L{limit}",
+                ],
+                cwd=path,
+                capture_output=True,
+                text=True,
+            )
+        except subprocess.CalledProcessError as e:
+            error = f"Error getting open pull requests from {name}: {e}"
+            print(error)
+            errors.append(error)
+            print()
+            continue
+
+        pr_number = pr_list.stdout.split("\t")[0]
+        print(f"Merging PR #{pr_number} to base branch in {name}.")
+        try:
+            owner_and_repo = re.search(".+:(.+?).git$", repo).group(1)
+            command = [
+                "gh",
+                "pr",
+                "merge",
+                f"{pr_number}",
+                f"-R{owner_and_repo}",
+            ]
+            if args.body is not None:
+                command.append(f"-b {args.body}")
+            if args.delete:
+                command.append("-d")
+            match args.strategy:
+                case "merge":
+                    command.append("-m")
+                case "rebase":
+                    command.append("-r")
+                case "squash":
+                    command.append("-s")
+
+            subprocess.check_call(command)
+        except subprocess.CalledProcessError as e:
+            error = f"Error merging pull request {pr_number} in {name}: {e}"
+            print(error)
+            errors.append(error)
+            print()
+            continue
+
+        # sleep for 1 seconds to keep us from being rate limited
+        time.sleep(1)
+
+
 def patch(args):
     """
     Apply a git patch to all repositories in the config file.
     """
-    if not args.patch:
-        print("Please specify a patch file to apply.")
-        sys.exit(1)
-
     if not os.path.exists(args.patch):
         print(f"Patch file {args.patch} does not exist.")
         sys.exit(1)
 
-    type(args.patch)
-    errors = []
+    errors = list()
     for name, path, _ in _iter_repos(args):
         print(f"Applying patch to {name} in {path}")
         try:
@@ -154,15 +212,66 @@ def patch(args):
         return errors
 
 
+def pr(args):
+    """
+    Using the Github CLI tool (gh), push a feature branch and create a PR.
+    """
+    errors = list()
+    for name, path, repo in _iter_repos(args):
+        try:
+            branch = (
+                subprocess.run(
+                    ["git", "branch", "--show-current"], cwd=path, capture_output=True
+                )
+                .stdout.decode("utf-8")
+                .strip()
+            )
+        except subprocess.CalledProcessError as e:
+            error = f"Unable to get branch from {name}: {e}."
+            print(error)
+            errors.append(error)
+            print()
+            continue
+
+        if branch == "main":
+            error = f"Currently on branch 'main' in {name}. Not creating a PR "
+            +"for this repository."
+            print(error)
+            errors.append(error)
+            continue
+        else:
+            print(f"Creating a pull request for {name} on branch {branch}")
+
+            owner_and_repo = re.search(".+:(.+?).git$", repo).group(1)
+            try:
+                command = [
+                    "gh",
+                    "pr",
+                    "new",
+                    f"-t {args.title}",
+                    f"-R{owner_and_repo}",
+                    f"-H{args.github_user}:{branch}",
+                    f"-B{args.branch_default}",
+                ]
+                if args.body is not None:
+                    command.append(f"-b {args.body}")
+                subprocess.run(command)
+            except subprocess.CalledProcessError as e:
+                error = f"Unable to create pull request for {name}: {e}"
+                print(error)
+                errors.append(error)
+                print()
+                continue
+
+            # sleep for 1 seconds to keep us from being rate limited
+            time.sleep(1)
+
+
 def push(args):
     """
     Push all repositories in the config file to a remote.
     """
-    errors = []
-    if not args.branch:
-        print("Please specify a branch to push with the --branch argument.")
-        sys.exit(1)
-
+    errors = list()
     for name, path, _ in _iter_repos(args):
         print(f"Pushing {name}/{args.branch} to {args.remote}")
         try:
@@ -184,12 +293,7 @@ def stage(args):
     Stage all repositories in the config file by adding all changes and
     committing them.
     """
-    errors = []
-
-    if not args.message:
-        print("Please provide a commit message via the --message argument.")
-        sys.exit(1)
-
+    errors = list()
     for name, path, repo in _iter_repos(args):
         for file in args.files:
             if file == ".":
@@ -200,7 +304,7 @@ def stage(args):
                     text=True,
                 )
                 print(f"Adding all changes in {name} to staging:")
-                print(changed_files.stdout)
+                print(changed_files.stdout.strip())
             else:
                 print(f"Adding {file} to staging in {name}.")
 
@@ -238,7 +342,7 @@ def sync(args):
 
     Optionally push to the user's fork.
     """
-    errors = []
+    errors = list()
     for name, path, repo in _iter_repos(args):
         print(f"Syncing {name} from {repo} to {path}.")
         subprocess.check_call(["git", "switch", args.branch_default], cwd=path)
